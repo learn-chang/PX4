@@ -398,13 +398,15 @@ void MulticopterPositionControl::Run()
 
 		_sample_interval_s.update(dt);
 
-		if (_vehicle_control_mode_sub.updated()) {
-			const bool previous_position_control_enabled = _vehicle_control_mode.flag_multicopter_position_control_enabled;
+		if (_vehicle_control_mode_sub.updated()) //飞控状态更新
+		{
+			const bool previous_position_control_enabled = _vehicle_control_mode.flag_multicopter_position_control_enabled; //记录上一次的控制状态
 
-			if (_vehicle_control_mode_sub.update(&_vehicle_control_mode)) {
+			if (_vehicle_control_mode_sub.update(&_vehicle_control_mode)) //拉取新的数据
+			{       // 情况1：位置控制从“关闭 ➜ 打开”
 				if (!previous_position_control_enabled && _vehicle_control_mode.flag_multicopter_position_control_enabled) {
 					_time_position_control_enabled = _vehicle_control_mode.timestamp;
-
+                                // 情况2：位置控制从“打开 ➜ 关闭”
 				} else if (previous_position_control_enabled && !_vehicle_control_mode.flag_multicopter_position_control_enabled) {
 					// clear existing setpoint when controller is no longer active
 					_setpoint = PositionControl::empty_trajectory_setpoint;
@@ -412,14 +414,16 @@ void MulticopterPositionControl::Run()
 			}
 		}
 
-		_vehicle_land_detected_sub.update(&_vehicle_land_detected);
+		_vehicle_land_detected_sub.update(&_vehicle_land_detected); //更新地面状态信息
 
-		if (_param_mpc_use_hte.get()) {
+		if (_param_mpc_use_hte.get()) //是否启用
+		{
 			hover_thrust_estimate_s hte;
 
-			if (_hover_thrust_estimate_sub.update(&hte)) {
+			if (_hover_thrust_estimate_sub.update(&hte))    //拉取最新数据
+			 {
 				if (hte.valid) {
-					_control.updateHoverThrust(hte.hover_thrust);
+					_control.updateHoverThrust(hte.hover_thrust); //传给控制器
 				}
 			}
 		}
@@ -532,8 +536,9 @@ void MulticopterPositionControl::Run()
 
 			float max_speed_xy = _param_mpc_xy_vel_max.get();
 
-			if (PX4_ISFINITE(vehicle_local_position.vxy_max)) {
-				max_speed_xy = math::min(max_speed_xy, vehicle_local_position.vxy_max);
+			if (PX4_ISFINITE(vehicle_local_position.vxy_max))
+			{
+			    max_speed_xy = math::min(max_speed_xy, vehicle_local_position.vxy_max);
 			}
 
 			_control.setVelocityLimits(
@@ -544,8 +549,8 @@ void MulticopterPositionControl::Run()
 			_control.setInputSetpoint(_setpoint);
 
 			// update states
-			if (!PX4_ISFINITE(_setpoint.position[2])
-			    && PX4_ISFINITE(_setpoint.velocity[2]) && (fabsf(_setpoint.velocity[2]) > FLT_EPSILON)
+			if (!PX4_ISFINITE(_setpoint.position[2])   //目标高度无效，说明高度控制暂时没有明确的目标高度
+			    && PX4_ISFINITE(_setpoint.velocity[2]) && (fabsf(_setpoint.velocity[2]) > FLT_EPSILON)//目标垂直速度有效
 			    && PX4_ISFINITE(vehicle_local_position.z_deriv) && vehicle_local_position.z_valid && vehicle_local_position.v_z_valid) {
 				// A change in velocity is demanded and the altitude is not controlled.
 				// Set velocity to the derivative of position

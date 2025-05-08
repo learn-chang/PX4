@@ -124,52 +124,59 @@ bool PositionControl::update(const float dt)
 void PositionControl::_positionControl()
 {
 	// P-position controller
-	Vector3f vel_sp_position = (_pos_sp - _pos).emult(_gain_pos_p);
+	Vector3f vel_sp_position = (_pos_sp - _pos).emult(_gain_pos_p);   // Vsp = (P - p)*KP
 	// Position and feed-forward velocity setpoints or position states being NAN results in them not having an influence
-	ControlMath::addIfNotNanVector3f(_vel_sp, vel_sp_position);
+	ControlMath::addIfNotNanVector3f(_vel_sp, vel_sp_position);       //前馈速度+vel_sp_position
 	// make sure there are no NAN elements for further reference while constraining
-	ControlMath::setZeroIfNanVector3f(vel_sp_position);
+	ControlMath::setZeroIfNanVector3f(vel_sp_position);               // 第三步：保证 vel_sp_position 不含 NaN，避免后续出错
+
 
 	// Constrain horizontal velocity by prioritizing the velocity component along the
 	// the desired position setpoint over the feed-forward term.
 	_vel_sp.xy() = ControlMath::constrainXY(vel_sp_position.xy(), (_vel_sp - vel_sp_position).xy(), _lim_vel_horizontal);
 	// Constrain velocity in z-direction.
-	_vel_sp(2) = math::constrain(_vel_sp(2), -_lim_vel_up, _lim_vel_down);
+	_vel_sp(2) = math::constrain(_vel_sp(2), -_lim_vel_up, _lim_vel_down);  //限制上升下降速度
 }
 
 void PositionControl::_velocityControl(const float dt)
 {
 	// Constrain vertical velocity integral
-	_vel_int(2) = math::constrain(_vel_int(2), -CONSTANTS_ONE_G, CONSTANTS_ONE_G);
+	_vel_int(2) = math::constrain(_vel_int(2), -CONSTANTS_ONE_G, CONSTANTS_ONE_G);  //限制垂直方向积分范围
 
 	// PID velocity control
 	Vector3f vel_error = _vel_sp - _vel;
-	Vector3f acc_sp_velocity = vel_error.emult(_gain_vel_p) + _vel_int - _vel_dot.emult(_gain_vel_d);
-
+	Vector3f acc_sp_velocity = vel_error.emult(_gain_vel_p) + _vel_int - _vel_dot.emult(_gain_vel_d); //p+i-D
+        //out = P+ I + D;
 	// No control input from setpoints or corresponding states which are NAN
-	ControlMath::addIfNotNanVector3f(_acc_sp, acc_sp_velocity);
+	ControlMath::addIfNotNanVector3f(_acc_sp, acc_sp_velocity);//防止存在_acc_sp + acc_sp_velocity
 
-	_accelerationControl();
+	_accelerationControl();  //加速度转推力
 
-	// Integrator anti-windup in vertical direction
+	// 抗积分饱和
 	if ((_thr_sp(2) >= -_lim_thr_min && vel_error(2) >= 0.f) ||
 	    (_thr_sp(2) <= -_lim_thr_max && vel_error(2) <= 0.f)) {
 		vel_error(2) = 0.f;
 	}
 
 	// Prioritize vertical control while keeping a horizontal margin
-	const Vector2f thrust_sp_xy(_thr_sp);
-	const float thrust_sp_xy_norm = thrust_sp_xy.norm();
+	const Vector2f thrust_sp_xy(_thr_sp);                  //水平推力当前大小
+	const float thrust_sp_xy_norm = thrust_sp_xy.norm();   //求模长
+
+	//分配最大总推力
 	const float thrust_max_squared = math::sq(_lim_thr_max);
 
 	// Determine how much vertical thrust is left keeping horizontal margin
+	//
 	const float allocated_horizontal_thrust = math::min(thrust_sp_xy_norm, _lim_thr_xy_margin);
 	const float thrust_z_max_squared = thrust_max_squared - math::sq(allocated_horizontal_thrust);
 
 	// Saturate maximal vertical thrust
+	//限制Z推力
 	_thr_sp(2) = math::max(_thr_sp(2), -sqrtf(thrust_z_max_squared));
 
 	// Determine how much horizontal thrust is left after prioritizing vertical control
+	//反向约束水平推力
+
 	const float thrust_max_xy_squared = thrust_max_squared - math::sq(_thr_sp(2));
 	float thrust_max_xy = 0.f;
 
@@ -184,12 +191,13 @@ void PositionControl::_velocityControl(const float dt)
 
 	// Use tracking Anti-Windup for horizontal direction: during saturation, the integrator is used to unsaturate the output
 	// see Anti-Reset Windup for PID controllers, L.Rundqwist, 1990
-	const Vector2f acc_sp_xy_produced = Vector2f(_thr_sp) * (CONSTANTS_ONE_G / _hover_thrust);
+	const Vector2f acc_sp_xy_produced = Vector2f(_thr_sp) * (CONSTANTS_ONE_G / _hover_thrust); //转换为等效水平加速度
 
 	// The produced acceleration can be greater or smaller than the desired acceleration due to the saturations and the actual vertical thrust (computed independently).
 	// The ARW loop needs to run if the signal is saturated only.
+	//速度误差抗积分饱和
 	if (_acc_sp.xy().norm_squared() > acc_sp_xy_produced.norm_squared()) {
-		const float arw_gain = 2.f / _gain_vel_p(0);
+		const float arw_gain = 2.f / _gain_vel_p(0);   //是速度控制器P的增益，单位化修正因子
 		const Vector2f acc_sp_xy = _acc_sp.xy();
 
 		vel_error.xy() = Vector2f(vel_error) - arw_gain * (acc_sp_xy - acc_sp_xy_produced);
@@ -204,19 +212,21 @@ void PositionControl::_velocityControl(const float dt)
 void PositionControl::_accelerationControl()
 {
 	// Assume standard acceleration due to gravity in vertical direction for attitude generation
-	float z_specific_force = -CONSTANTS_ONE_G;
+	float z_specific_force = -CONSTANTS_ONE_G; //NED 坐标系中，z 轴向下为正，重力为 -g
 
-	if (!_decouple_horizontal_and_vertical_acceleration) {
+	if (!_decouple_horizontal_and_vertical_acceleration) //NED 坐标系中，z 轴向下为正，重力为 -g
+	{
 		// Include vertical acceleration setpoint for better horizontal acceleration tracking
 		z_specific_force += _acc_sp(2);
 	}
-
+        //用期望加速度构造一个飞机朝下的方向
 	Vector3f body_z = Vector3f(-_acc_sp(0), -_acc_sp(1), -z_specific_force).normalized();
-	ControlMath::limitTilt(body_z, Vector3f(0, 0, 1), _lim_tilt);
+	ControlMath::limitTilt(body_z, Vector3f(0, 0, 1), _lim_tilt); //防止机体太倾斜
 	// Convert to thrust assuming hover thrust produces standard gravity
-	const float thrust_ned_z = _acc_sp(2) * (_hover_thrust / CONSTANTS_ONE_G) - _hover_thrust;
+	//计算竖直向下推力
+	const float thrust_ned_z = _acc_sp(2) * (_hover_thrust / CONSTANTS_ONE_G) - _hover_thrust;  //将z轴加速度转换为推力
 	// Project thrust to planned body attitude
-	const float cos_ned_body = (Vector3f(0, 0, 1).dot(body_z));
+	const float cos_ned_body = (Vector3f(0, 0, 1).dot(body_z));  //机体与Z轴的夹角，为了修正姿态倾斜带来的推力损失
 	const float collective_thrust = math::min(thrust_ned_z / cos_ned_body, -_lim_thr_min);
 	_thr_sp = body_z * collective_thrust;
 }
