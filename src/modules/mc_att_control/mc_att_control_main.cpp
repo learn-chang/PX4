@@ -143,7 +143,8 @@ MulticopterAttitudeControl::generate_attitude_setpoint(const Quatf &q, float dt,
 	attitude_setpoint.yaw_sp_move_rate = _manual_control_setpoint.yaw * math::radians(_param_mpc_man_y_max.get());
 
 	// Avoid accumulating absolute yaw error with arming stick gesture in case heading_good_for_control stays true
-	if ((_manual_control_setpoint.throttle < -.9f) && (_param_mc_airmode.get() != 2)) {
+	if ((_manual_control_setpoint.throttle < -.9f) && (_param_mc_airmode.get() != 2)) 
+	{
 		reset_yaw_sp = true;
 	}
 

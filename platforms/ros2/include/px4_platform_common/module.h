@@ -58,7 +58,7 @@
  * When running in its own thread:
  *      static int task_spawn(int argc, char *argv[])
  *      {
- *              // call px4_task_spawn_cmd() with &run_trampoline as startup method
+ *              // call px4_task_spawn_cmd() with &poline as startup method
  *              // optional: wait until _object is not null, which means the task got initialized (use a timeout)
  *              // set _task_id and return 0
  *              // on error return != 0 (and _task_id must be -1)
